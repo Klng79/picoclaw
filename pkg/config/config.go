@@ -53,10 +53,11 @@ type Config struct {
 	Channels  ChannelsConfig  `json:"channels"`
 	Providers ProvidersConfig `json:"providers,omitempty"`
 	ModelList []ModelConfig   `json:"model_list"` // New model-centric provider configuration
-	Gateway   GatewayConfig   `json:"gateway"`
-	Tools     ToolsConfig     `json:"tools"`
-	Heartbeat HeartbeatConfig `json:"heartbeat"`
-	Devices   DevicesConfig   `json:"devices"`
+	Gateway     GatewayConfig     `json:"gateway"`
+	Tools       ToolsConfig       `json:"tools"`
+	Heartbeat   HeartbeatConfig   `json:"heartbeat"`
+	Devices     DevicesConfig     `json:"devices"`
+	Persistence PersistenceConfig `json:"persistence"`
 }
 
 // MarshalJSON implements custom JSON marshaling for Config
@@ -299,6 +300,17 @@ type WeComAppConfig struct {
 type HeartbeatConfig struct {
 	Enabled  bool `json:"enabled"  env:"PICOCLAW_HEARTBEAT_ENABLED"`
 	Interval int  `json:"interval" env:"PICOCLAW_HEARTBEAT_INTERVAL"` // minutes, min 5
+}
+
+type PersistenceType string
+
+const (
+	PersistenceJSON   PersistenceType = "json"
+	PersistenceSQLite PersistenceType = "sqlite"
+)
+
+type PersistenceConfig struct {
+	Type PersistenceType `json:"type" env:"PICOCLAW_PERSISTENCE_TYPE"`
 }
 
 type DevicesConfig struct {

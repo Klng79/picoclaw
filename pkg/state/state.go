@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
 // State represents the persistent state for a workspace.
@@ -23,16 +26,18 @@ type State struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-// Manager manages persistent state with atomic saves.
+// Manager manages persistent state with atomic saves (JSON) or SQLite.
 type Manager struct {
 	workspace string
 	state     *State
 	mu        sync.RWMutex
 	stateFile string
+	pType     config.PersistenceType
+	db        *utils.DB
 }
 
-// NewManager creates a new state manager for the given workspace.
-func NewManager(workspace string) *Manager {
+// NewManager creates a new state manager for the given workspace and persistence type.
+func NewManager(pType config.PersistenceType, workspace string) *Manager {
 	stateDir := filepath.Join(workspace, "state")
 	stateFile := filepath.Join(stateDir, "state.json")
 	oldStateFile := filepath.Join(workspace, "state.json")
@@ -44,60 +49,87 @@ func NewManager(workspace string) *Manager {
 		workspace: workspace,
 		stateFile: stateFile,
 		state:     &State{},
+		pType:     pType,
 	}
 
-	// Try to load from new location first
-	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
-		// New file doesn't exist, try migrating from old location
-		if data, err := os.ReadFile(oldStateFile); err == nil {
-			if err := json.Unmarshal(data, sm.state); err == nil {
-				// Migrate to new location
-				sm.saveAtomic()
-				log.Printf("[INFO] state: migrated state from %s to %s", oldStateFile, stateFile)
+	if pType == config.PersistenceSQLite {
+		dbPath := filepath.Join(workspace, "picoclaw.db")
+		db, err := utils.InitDB(dbPath)
+		if err != nil {
+			log.Printf("[ERROR] state: failed to initialize sqlite database: %v. Falling back to JSON.", err)
+			sm.pType = config.PersistenceJSON
+		} else {
+			sm.db = db
+		}
+	}
+
+	// Handle migration from JSON to SQLite if necessary
+	if sm.pType == config.PersistenceSQLite {
+		// Try to load from state.json first to migrate
+		hasJSON := false
+		if _, err := os.Stat(stateFile); err == nil {
+			hasJSON = true
+		} else if _, err := os.Stat(oldStateFile); err == nil {
+			stateFile = oldStateFile
+			hasJSON = true
+		}
+
+		if hasJSON {
+			if data, err := os.ReadFile(stateFile); err == nil {
+				if err := json.Unmarshal(data, sm.state); err == nil {
+					// Migrate to SQLite
+					if err := sm.saveSQLite(); err == nil {
+						log.Printf("[INFO] state: migrated state from %s to sqlite", stateFile)
+						// Archive old file
+						os.Rename(stateFile, stateFile+".bak")
+					}
+				}
 			}
 		}
+		sm.loadSQLite() // Always load from SQLite if in SQLite mode
 	} else {
-		// Load from new location
-		sm.load()
+		// Original JSON loading logic
+		if _, err := os.Stat(stateFile); os.IsNotExist(err) {
+			if data, err := os.ReadFile(oldStateFile); err == nil {
+				if err := json.Unmarshal(data, sm.state); err == nil {
+					sm.saveAtomic()
+					log.Printf("[INFO] state: migrated state from %s to %s", oldStateFile, stateFile)
+				}
+			}
+		} else {
+			sm.load()
+		}
 	}
 
 	return sm
 }
 
-// SetLastChannel atomically updates the last channel and saves the state.
-// This method uses a temp file + rename pattern for atomic writes,
-// ensuring that the state file is never corrupted even if the process crashes.
+// SetLastChannel updates the last channel and saves the state.
 func (sm *Manager) SetLastChannel(channel string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	// Update state
 	sm.state.LastChannel = channel
 	sm.state.Timestamp = time.Now()
 
-	// Atomic save using temp file + rename
-	if err := sm.saveAtomic(); err != nil {
-		return fmt.Errorf("failed to save state atomically: %w", err)
+	if sm.pType == config.PersistenceSQLite {
+		return sm.saveSQLite()
 	}
-
-	return nil
+	return sm.saveAtomic()
 }
 
-// SetLastChatID atomically updates the last chat ID and saves the state.
+// SetLastChatID updates the last chat ID and saves the state.
 func (sm *Manager) SetLastChatID(chatID string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	// Update state
 	sm.state.LastChatID = chatID
 	sm.state.Timestamp = time.Now()
 
-	// Atomic save using temp file + rename
-	if err := sm.saveAtomic(); err != nil {
-		return fmt.Errorf("failed to save state atomically: %w", err)
+	if sm.pType == config.PersistenceSQLite {
+		return sm.saveSQLite()
 	}
-
-	return nil
+	return sm.saveAtomic()
 }
 
 // GetLastChannel returns the last channel from the state.
@@ -121,52 +153,72 @@ func (sm *Manager) GetTimestamp() time.Time {
 	return sm.state.Timestamp
 }
 
-// saveAtomic performs an atomic save using temp file + rename.
-// This ensures that the state file is never corrupted:
-// 1. Write to a temp file
-// 2. Rename temp file to target (atomic on POSIX systems)
-// 3. If rename fails, cleanup the temp file
-//
-// Must be called with the lock held.
+// saveAtomic performs an atomic save using temp file + rename (JSON mode).
 func (sm *Manager) saveAtomic() error {
-	// Create temp file in the same directory as the target
 	tempFile := sm.stateFile + ".tmp"
-
-	// Marshal state to JSON
 	data, err := json.MarshalIndent(sm.state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
-
-	// Write to temp file
 	if err := os.WriteFile(tempFile, data, 0o644); err != nil {
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}
-
-	// Atomic rename from temp to target
 	if err := os.Rename(tempFile, sm.stateFile); err != nil {
-		// Cleanup temp file if rename fails
 		os.Remove(tempFile)
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
-
 	return nil
 }
 
-// load loads the state from disk.
+// saveSQLite saves the current state to the SQLite database.
+func (sm *Manager) saveSQLite() error {
+	if sm.db == nil {
+		return fmt.Errorf("sqlite database not initialized")
+	}
+
+	_, err := sm.db.Exec(`
+		INSERT INTO global_state (key, value, updated_at) 
+		VALUES (?, ?, ?) 
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+	`, "state", serializeState(sm.state), time.Now())
+	return err
+}
+
+// load loads the state from JSON.
 func (sm *Manager) load() error {
 	data, err := os.ReadFile(sm.stateFile)
 	if err != nil {
-		// File doesn't exist yet, that's OK
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return fmt.Errorf("failed to read state file: %w", err)
 	}
+	return json.Unmarshal(data, sm.state)
+}
 
-	if err := json.Unmarshal(data, sm.state); err != nil {
-		return fmt.Errorf("failed to unmarshal state: %w", err)
+// loadSQLite loads the state from SQLite.
+func (sm *Manager) loadSQLite() error {
+	if sm.db == nil {
+		return fmt.Errorf("sqlite database not initialized")
 	}
 
+	var val string
+	err := sm.db.QueryRow("SELECT value FROM global_state WHERE key = ?", "state").Scan(&val)
+	if err != nil {
+		return err
+	}
+
+	return json.Unmarshal([]byte(val), sm.state)
+}
+
+func serializeState(s *State) string {
+	data, _ := json.Marshal(s)
+	return string(data)
+}
+
+func (sm *Manager) Close() error {
+	if sm.db != nil {
+		return sm.db.Close()
+	}
 	return nil
 }

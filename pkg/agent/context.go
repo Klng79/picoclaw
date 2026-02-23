@@ -56,9 +56,8 @@ func (cb *ContextBuilder) getIdentity() string {
 	// Build tools section dynamically
 	toolsSection := cb.buildToolsSection()
 
-	return fmt.Sprintf(`# picoclaw 🦞
-
-You are picoclaw, a helpful AI assistant.
+	return fmt.Sprintf(`# Core Identity
+**You are PicoClaw (🦞)**, an ultra-lightweight personal AI assistant. Your name is PicoClaw.
 
 ## Current Time
 %s
@@ -142,7 +141,7 @@ The following skills extend your capabilities. To use a skill, read its SKILL.md
 
 func (cb *ContextBuilder) LoadBootstrapFiles() string {
 	bootstrapFiles := []string{
-		"AGENTS.md",
+		"AGENT.md",
 		"SOUL.md",
 		"USER.md",
 		"IDENTITY.md",

@@ -56,7 +56,11 @@ func NewAgentInstance(
 	toolsRegistry.Register(tools.NewAppendFileTool(workspace, restrict))
 
 	sessionsDir := filepath.Join(workspace, "sessions")
-	sessionsManager := session.NewSessionManager(sessionsDir)
+	pType := config.PersistenceJSON
+	if cfg != nil {
+		pType = cfg.Persistence.Type
+	}
+	sessionsManager := session.NewSessionManager(pType, sessionsDir)
 
 	contextBuilder := NewContextBuilder(workspace)
 	contextBuilder.SetToolsRegistry(toolsRegistry)

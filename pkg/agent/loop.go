@@ -66,7 +66,11 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	defaultAgent := registry.GetDefaultAgent()
 	var stateManager *state.Manager
 	if defaultAgent != nil {
-		stateManager = state.NewManager(defaultAgent.Workspace)
+		pType := config.PersistenceJSON
+		if cfg != nil {
+			pType = cfg.Persistence.Type
+		}
+		stateManager = state.NewManager(pType, defaultAgent.Workspace)
 	}
 
 	return &AgentLoop{

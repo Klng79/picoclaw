@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
+	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/constants"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/state"
@@ -44,7 +45,7 @@ type HeartbeatService struct {
 }
 
 // NewHeartbeatService creates a new heartbeat service
-func NewHeartbeatService(workspace string, intervalMinutes int, enabled bool) *HeartbeatService {
+func NewHeartbeatService(pType config.PersistenceType, workspace string, intervalMinutes int, enabled bool) *HeartbeatService {
 	// Apply minimum interval
 	if intervalMinutes < minIntervalMinutes && intervalMinutes != 0 {
 		intervalMinutes = minIntervalMinutes
@@ -58,7 +59,7 @@ func NewHeartbeatService(workspace string, intervalMinutes int, enabled bool) *H
 		workspace: workspace,
 		interval:  time.Duration(intervalMinutes) * time.Minute,
 		enabled:   enabled,
-		state:     state.NewManager(workspace),
+		state:     state.NewManager(pType, workspace),
 	}
 }
 

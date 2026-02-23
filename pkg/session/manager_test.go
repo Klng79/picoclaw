@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/sipeed/picoclaw/pkg/config"
 )
 
 func TestSanitizeFilename(t *testing.T) {
@@ -31,7 +33,7 @@ func TestSanitizeFilename(t *testing.T) {
 
 func TestSave_WithColonInKey(t *testing.T) {
 	tmpDir := t.TempDir()
-	sm := NewSessionManager(tmpDir)
+	sm := NewSessionManager(config.PersistenceJSON, tmpDir)
 
 	// Create a session with a key containing colon (typical channel session key).
 	key := "telegram:123456"
@@ -50,7 +52,7 @@ func TestSave_WithColonInKey(t *testing.T) {
 	}
 
 	// Load into a fresh manager and verify the session round-trips.
-	sm2 := NewSessionManager(tmpDir)
+	sm2 := NewSessionManager(config.PersistenceJSON, tmpDir)
 	history := sm2.GetHistory(key)
 	if len(history) != 1 {
 		t.Fatalf("expected 1 message after reload, got %d", len(history))
@@ -62,7 +64,7 @@ func TestSave_WithColonInKey(t *testing.T) {
 
 func TestSave_RejectsPathTraversal(t *testing.T) {
 	tmpDir := t.TempDir()
-	sm := NewSessionManager(tmpDir)
+	sm := NewSessionManager(config.PersistenceJSON, tmpDir)
 
 	badKeys := []string{"", ".", "..", "foo/bar", "foo\\bar"}
 	for _, key := range badKeys {

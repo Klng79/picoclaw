@@ -2,13 +2,16 @@ package session
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
 type Session struct {
@@ -23,17 +26,38 @@ type SessionManager struct {
 	sessions map[string]*Session
 	mu       sync.RWMutex
 	storage  string
+	pType    config.PersistenceType
+	db       *utils.DB
 }
 
-func NewSessionManager(storage string) *SessionManager {
+func NewSessionManager(pType config.PersistenceType, storage string) *SessionManager {
 	sm := &SessionManager{
 		sessions: make(map[string]*Session),
 		storage:  storage,
+		pType:    pType,
+	}
+
+	if pType == config.PersistenceSQLite {
+		// In SQLite mode, storage path is usually the workspace dir
+		// The DB is at workspace/picoclaw.db
+		dbPath := filepath.Join(filepath.Dir(storage), "picoclaw.db")
+		db, err := utils.InitDB(dbPath)
+		if err != nil {
+			log.Printf("[ERROR] session: failed to initialize sqlite database: %v. Falling back to JSON.", err)
+			sm.pType = config.PersistenceJSON
+		} else {
+			sm.db = db
+		}
 	}
 
 	if storage != "" {
 		os.MkdirAll(storage, 0o755)
-		sm.loadSessions()
+		jsonFound := sm.loadSessions()
+		
+		// If we are in SQLite mode and found JSON sessions, migrate them to DB
+		if sm.pType == config.PersistenceSQLite && jsonFound {
+			sm.migrateToSQLite()
+		}
 	}
 
 	return sm
@@ -56,6 +80,11 @@ func (sm *SessionManager) GetOrCreate(key string) *Session {
 	}
 	sm.sessions[key] = session
 
+	// In SQLite mode, we might want to ensure the session exists in the DB
+	if sm.pType == config.PersistenceSQLite {
+		sm.saveSessionMetadata(session)
+	}
+
 	return session
 }
 
@@ -66,12 +95,9 @@ func (sm *SessionManager) AddMessage(sessionKey, role, content string) {
 	})
 }
 
-// AddFullMessage adds a complete message with tool calls and tool call ID to the session.
-// This is used to save the full conversation flow including tool calls and tool results.
+// AddFullMessage adds a complete message to the session and saves it.
 func (sm *SessionManager) AddFullMessage(sessionKey string, msg providers.Message) {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	session, ok := sm.sessions[sessionKey]
 	if !ok {
 		session = &Session{
@@ -84,6 +110,13 @@ func (sm *SessionManager) AddFullMessage(sessionKey string, msg providers.Messag
 
 	session.Messages = append(session.Messages, msg)
 	session.Updated = time.Now()
+	sm.mu.Unlock()
+
+	// Persistence is handled by the caller calling Save() or via internal SQLite sync
+	if sm.pType == config.PersistenceSQLite {
+		sm.saveSessionMetadata(session)
+		sm.saveMessage(sessionKey, msg)
+	}
 }
 
 func (sm *SessionManager) GetHistory(key string) []providers.Message {
@@ -113,63 +146,70 @@ func (sm *SessionManager) GetSummary(key string) string {
 
 func (sm *SessionManager) SetSummary(key string, summary string) {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	session, ok := sm.sessions[key]
 	if ok {
 		session.Summary = summary
 		session.Updated = time.Now()
 	}
+	sm.mu.Unlock()
+
+	if sm.pType == config.PersistenceSQLite && ok {
+		sm.saveSessionMetadata(session)
+	}
 }
 
 func (sm *SessionManager) TruncateHistory(key string, keepLast int) {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	session, ok := sm.sessions[key]
 	if !ok {
+		sm.mu.Unlock()
 		return
 	}
 
 	if keepLast <= 0 {
 		session.Messages = []providers.Message{}
-		session.Updated = time.Now()
+	} else if len(session.Messages) > keepLast {
+		session.Messages = session.Messages[len(session.Messages)-keepLast:]
+	} else {
+		sm.mu.Unlock()
 		return
 	}
-
-	if len(session.Messages) <= keepLast {
-		return
-	}
-
-	session.Messages = session.Messages[len(session.Messages)-keepLast:]
 	session.Updated = time.Now()
+	sm.mu.Unlock()
+
+	if sm.pType == config.PersistenceSQLite {
+		// For SQLite, we might just re-sync the whole message list or handle truncation specifically.
+		// For simplicity in this "lite" agent, we'll re-sync the session content.
+		sm.resyncMessages(key, session.Messages)
+	}
 }
 
-// sanitizeFilename converts a session key into a cross-platform safe filename.
-// Session keys use "channel:chatID" (e.g. "telegram:123456") but ':' is the
-// volume separator on Windows, so filepath.Base would misinterpret the key.
-// We replace it with '_'. The original key is preserved inside the JSON file,
-// so loadSessions still maps back to the right in-memory key.
 func sanitizeFilename(key string) string {
 	return strings.ReplaceAll(key, ":", "_")
 }
 
 func (sm *SessionManager) Save(key string) error {
+	if sm.pType == config.PersistenceSQLite {
+		// In SQLite mode, messages are saved as they are added.
+		// We just need to ensure metadata is up to date if needed.
+		sm.mu.RLock()
+		session, ok := sm.sessions[key]
+		sm.mu.RUnlock()
+		if ok {
+			return sm.saveSessionMetadata(session)
+		}
+		return nil
+	}
+
 	if sm.storage == "" {
 		return nil
 	}
 
 	filename := sanitizeFilename(key)
-
-	// filepath.IsLocal rejects empty names, "..", absolute paths, and
-	// OS-reserved device names (NUL, COM1 … on Windows).
-	// The extra checks reject "." and any directory separators so that
-	// the session file is always written directly inside sm.storage.
 	if filename == "." || !filepath.IsLocal(filename) || strings.ContainsAny(filename, `/\`) {
 		return os.ErrInvalid
 	}
 
-	// Snapshot under read lock, then perform slow file I/O after unlock.
 	sm.mu.RLock()
 	stored, ok := sm.sessions[key]
 	if !ok {
@@ -178,17 +218,13 @@ func (sm *SessionManager) Save(key string) error {
 	}
 
 	snapshot := Session{
-		Key:     stored.Key,
-		Summary: stored.Summary,
-		Created: stored.Created,
-		Updated: stored.Updated,
+		Key:      stored.Key,
+		Summary:  stored.Summary,
+		Created:  stored.Created,
+		Updated:  stored.Updated,
+		Messages: make([]providers.Message, len(stored.Messages)),
 	}
-	if len(stored.Messages) > 0 {
-		snapshot.Messages = make([]providers.Message, len(stored.Messages))
-		copy(snapshot.Messages, stored.Messages)
-	} else {
-		snapshot.Messages = []providers.Message{}
-	}
+	copy(snapshot.Messages, stored.Messages)
 	sm.mu.RUnlock()
 
 	data, err := json.MarshalIndent(snapshot, "", "  ")
@@ -214,10 +250,6 @@ func (sm *SessionManager) Save(key string) error {
 		_ = tmpFile.Close()
 		return err
 	}
-	if err := tmpFile.Chmod(0o644); err != nil {
-		_ = tmpFile.Close()
-		return err
-	}
 	if err := tmpFile.Sync(); err != nil {
 		_ = tmpFile.Close()
 		return err
@@ -233,50 +265,157 @@ func (sm *SessionManager) Save(key string) error {
 	return nil
 }
 
-func (sm *SessionManager) loadSessions() error {
+func (sm *SessionManager) loadSessions() bool {
+	jsonFound := false
+	// 1. Load from JSON files first (always do this to ensure we catch files that might be added)
 	files, err := os.ReadDir(sm.storage)
-	if err != nil {
-		return err
+	if err == nil {
+		for _, file := range files {
+			if file.IsDir() || filepath.Ext(file.Name()) != ".json" {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(sm.storage, file.Name()))
+			if err != nil {
+				continue
+			}
+			var session Session
+			if err := json.Unmarshal(data, &session); err == nil {
+				sm.sessions[session.Key] = &session
+				jsonFound = true
+			}
+		}
 	}
 
-	for _, file := range files {
-		if file.IsDir() {
-			continue
+	// 2. If in SQLite mode, load from DB as well (DB takes precedence)
+	if sm.pType == config.PersistenceSQLite && sm.db != nil {
+		type sessionMeta struct {
+			key, summary     string
+			created, updated time.Time
 		}
+		var metas []sessionMeta
 
-		if filepath.Ext(file.Name()) != ".json" {
-			continue
+		rows, err := sm.db.Query("SELECT key, summary, created_at, updated_at FROM sessions")
+		if err == nil {
+			for rows.Next() {
+				var m sessionMeta
+				if err := rows.Scan(&m.key, &m.summary, &m.created, &m.updated); err == nil {
+					metas = append(metas, m)
+				}
+			}
+			rows.Close()
+
+			for _, m := range metas {
+				session, ok := sm.sessions[m.key]
+				if !ok {
+					session = &Session{Key: m.key}
+					sm.sessions[m.key] = session
+				}
+				session.Summary = m.summary
+				session.Created = m.created
+				session.Updated = m.updated
+				
+				// Load messages for this session
+				session.Messages = sm.loadMessages(m.key)
+			}
 		}
-
-		sessionPath := filepath.Join(sm.storage, file.Name())
-		data, err := os.ReadFile(sessionPath)
-		if err != nil {
-			continue
-		}
-
-		var session Session
-		if err := json.Unmarshal(data, &session); err != nil {
-			continue
-		}
-
-		sm.sessions[session.Key] = &session
 	}
 
-	return nil
+	return jsonFound
 }
 
-// SetHistory updates the messages of a session.
 func (sm *SessionManager) SetHistory(key string, history []providers.Message) {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	session, ok := sm.sessions[key]
 	if ok {
-		// Create a deep copy to strictly isolate internal state
-		// from the caller's slice.
 		msgs := make([]providers.Message, len(history))
 		copy(msgs, history)
 		session.Messages = msgs
 		session.Updated = time.Now()
 	}
+	sm.mu.Unlock()
+
+	if sm.pType == config.PersistenceSQLite && ok {
+		sm.resyncMessages(key, history)
+	}
+}
+
+// SQLite helper methods
+
+func (sm *SessionManager) saveSessionMetadata(s *Session) error {
+	if sm.db == nil {
+		return nil
+	}
+	_, err := sm.db.Exec(`
+		INSERT INTO sessions (key, summary, created_at, updated_at) 
+		VALUES (?, ?, ?, ?) 
+		ON CONFLICT(key) DO UPDATE SET summary=excluded.summary, updated_at=excluded.updated_at
+	`, s.Key, s.Summary, s.Created, s.Updated)
+	return err
+}
+
+func (sm *SessionManager) saveMessage(sessionKey string, msg providers.Message) error {
+	if sm.db == nil {
+		return nil
+	}
+	contentJSON, _ := json.Marshal(msg)
+	_, err := sm.db.Exec(`
+		INSERT INTO messages (session_key, role, content, created_at) 
+		VALUES (?, ?, ?, ?)
+	`, sessionKey, msg.Role, string(contentJSON), time.Now())
+	return err
+}
+
+func (sm *SessionManager) loadMessages(sessionKey string) []providers.Message {
+	if sm.db == nil {
+		return []providers.Message{}
+	}
+	rows, err := sm.db.Query("SELECT content FROM messages WHERE session_key = ? ORDER BY id ASC", sessionKey)
+	if err != nil {
+		return []providers.Message{}
+	}
+	defer rows.Close()
+
+	var msgs []providers.Message
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err == nil {
+			var msg providers.Message
+			if err := json.Unmarshal([]byte(content), &msg); err == nil {
+				msgs = append(msgs, msg)
+			}
+		}
+	}
+	return msgs
+}
+
+func (sm *SessionManager) resyncMessages(sessionKey string, msgs []providers.Message) error {
+	if sm.db == nil {
+		return nil
+	}
+	// Simple approach: delete and re-insert
+	sm.db.Exec("DELETE FROM messages WHERE session_key = ?", sessionKey)
+	for _, msg := range msgs {
+		sm.saveMessage(sessionKey, msg)
+	}
+	return nil
+}
+
+func (sm *SessionManager) migrateToSQLite() {
+	log.Printf("[INFO] session: migrating %d sessions to sqlite", len(sm.sessions))
+	for key, session := range sm.sessions {
+		if err := sm.saveSessionMetadata(session); err == nil {
+			sm.resyncMessages(key, session.Messages)
+			// Move JSON file to backup
+			filename := sanitizeFilename(key)
+			oldPath := filepath.Join(sm.storage, filename+".json")
+			os.Rename(oldPath, oldPath+".bak")
+		}
+	}
+}
+
+func (sm *SessionManager) Close() error {
+	if sm.db != nil {
+		return sm.db.Close()
+	}
+	return nil
 }

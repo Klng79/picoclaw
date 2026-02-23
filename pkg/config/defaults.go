@@ -312,5 +312,8 @@ func DefaultConfig() *Config {
 			Enabled:    false,
 			MonitorUSB: true,
 		},
+		Persistence: PersistenceConfig{
+			Type: PersistenceJSON,
+		},
 	}
 }

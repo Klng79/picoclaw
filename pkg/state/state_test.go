@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/sipeed/picoclaw/pkg/config"
 )
 
 func TestAtomicSave(t *testing.T) {
@@ -16,7 +18,7 @@ func TestAtomicSave(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	sm := NewManager(tmpDir)
+	sm := NewManager(config.PersistenceJSON, tmpDir)
 
 	// Test SetLastChannel
 	err = sm.SetLastChannel("test-channel")
@@ -42,7 +44,7 @@ func TestAtomicSave(t *testing.T) {
 	}
 
 	// Create a new manager to verify persistence
-	sm2 := NewManager(tmpDir)
+	sm2 := NewManager(config.PersistenceJSON, tmpDir)
 	if sm2.GetLastChannel() != "test-channel" {
 		t.Errorf("Expected persistent channel 'test-channel', got '%s'", sm2.GetLastChannel())
 	}
@@ -55,7 +57,7 @@ func TestSetLastChatID(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	sm := NewManager(tmpDir)
+	sm := NewManager(config.PersistenceJSON, tmpDir)
 
 	// Test SetLastChatID
 	err = sm.SetLastChatID("test-chat-id")
@@ -75,7 +77,7 @@ func TestSetLastChatID(t *testing.T) {
 	}
 
 	// Create a new manager to verify persistence
-	sm2 := NewManager(tmpDir)
+	sm2 := NewManager(config.PersistenceJSON, tmpDir)
 	if sm2.GetLastChatID() != "test-chat-id" {
 		t.Errorf("Expected persistent chat ID 'test-chat-id', got '%s'", sm2.GetLastChatID())
 	}
@@ -88,7 +90,7 @@ func TestAtomicity_NoCorruptionOnInterrupt(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	sm := NewManager(tmpDir)
+	sm := NewManager(config.PersistenceJSON, tmpDir)
 
 	// Write initial state
 	err = sm.SetLastChannel("initial-channel")
@@ -131,7 +133,7 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	sm := NewManager(tmpDir)
+	sm := NewManager(config.PersistenceJSON, tmpDir)
 
 	// Test concurrent writes
 	done := make(chan bool, 10)
@@ -175,12 +177,12 @@ func TestNewManager_ExistingState(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create initial state
-	sm1 := NewManager(tmpDir)
+	sm1 := NewManager(config.PersistenceJSON, tmpDir)
 	sm1.SetLastChannel("existing-channel")
 	sm1.SetLastChatID("existing-chat-id")
 
 	// Create new manager with same workspace
-	sm2 := NewManager(tmpDir)
+	sm2 := NewManager(config.PersistenceJSON, tmpDir)
 
 	// Verify state was loaded
 	if sm2.GetLastChannel() != "existing-channel" {
@@ -199,7 +201,7 @@ func TestNewManager_EmptyWorkspace(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	sm := NewManager(tmpDir)
+	sm := NewManager(config.PersistenceJSON, tmpDir)
 
 	// Verify default state
 	if sm.GetLastChannel() != "" {

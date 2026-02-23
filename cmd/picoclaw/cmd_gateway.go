@@ -88,6 +88,7 @@ func gatewayCmd() {
 	)
 
 	heartbeatService := heartbeat.NewHeartbeatService(
+		cfg.Persistence.Type,
 		cfg.WorkspacePath(),
 		cfg.Heartbeat.Interval,
 		cfg.Heartbeat.Enabled,
@@ -180,7 +181,7 @@ func gatewayCmd() {
 	}
 	fmt.Println("✓ Heartbeat service started")
 
-	stateManager := state.NewManager(cfg.WorkspacePath())
+	stateManager := state.NewManager(cfg.Persistence.Type, cfg.WorkspacePath())
 	deviceService := devices.NewService(devices.Config{
 		Enabled:    cfg.Devices.Enabled,
 		MonitorUSB: cfg.Devices.MonitorUSB,
