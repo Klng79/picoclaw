@@ -190,6 +190,10 @@ func printHelp() {
 }
 
 func getConfigPath() string {
+	// Check for local config in current directory first
+	if _, err := os.Stat("config/config.json"); err == nil {
+		return "config/config.json"
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".picoclaw", "config.json")
 }

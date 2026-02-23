@@ -12,6 +12,7 @@ REMOTE_HOST="${hostname:-mypaclaw.local}"
 REMOTE_DIR="~/picoclaw/"
 
 # Exclude list
+# We exclude binaries for other platforms, but INCLUDE linux-armv7 for the Pi
 EXCLUDE=(
     "--exclude=.git/"
     "--exclude=.agent/"
@@ -23,6 +24,8 @@ EXCLUDE=(
     "--exclude=build/picoclaw-darwin-*"
     "--exclude=build/picoclaw-linux-amd64"
     "--exclude=build/picoclaw-linux-arm64"
+    "--exclude=build/picoclaw-linux-loong64"
+    "--exclude=build/picoclaw-linux-riscv64"
     "--exclude=note.txt"
 )
 
