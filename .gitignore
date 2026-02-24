@@ -51,3 +51,7 @@ note.txt
 # Agents
 .agent/
 .agents/
+
+# Utility Scripts
+sync.sh
+auto-sync.sh
