@@ -30,12 +30,19 @@ type API struct {
 }
 
 func NewAPI(cfgFile string, cfg *config.Config, ch *channels.Manager, tr *tools.ToolRegistry, sm *state.Manager) *API {
-	globalDir := filepath.Dir(cfgFile)
 	workspace := cfg.WorkspacePath()
+	
+	// Use standard PicoClaw ~/.picoclaw path for global skills
+	home, _ := os.UserHomeDir()
+	globalConfigDir := filepath.Join(home, ".picoclaw")
+
+	cwd, _ := os.Getwd()
+	builtinSkillsDir := filepath.Join(cwd, "skills")
+
 	return &API{
 		cfgFile:   cfgFile,
 		cfg:       cfg,
-		loader:    skills.NewSkillsLoader(workspace, filepath.Join(globalDir, "skills"), filepath.Join(globalDir, "picoclaw", "skills")),
+		loader:    skills.NewSkillsLoader(workspace, filepath.Join(globalConfigDir, "skills"), builtinSkillsDir),
 		installer: skills.NewSkillInstaller(workspace),
 		channels:  ch,
 		tools:     tr,

@@ -66,10 +66,7 @@ func NewSkillsLoader(workspace string, globalSkills string, builtinSkills string
 		workspace: workspace,
 		workspaceSkills: []string{
 			filepath.Join(workspace, "skills"),
-			filepath.Join(cwd, ".agent", "skills"),
-			filepath.Join(cwd, ".agents", "skills"),
-			filepath.Join(workspace, ".agent", "skills"),
-			filepath.Join(workspace, ".agents", "skills"),
+			filepath.Join(cwd, "skills"), // Fallback if running via make/dev
 		},
 		globalSkills:  globalSkills, // ~/.picoclaw/skills
 		builtinSkills: builtinSkills,
