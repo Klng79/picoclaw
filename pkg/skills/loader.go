@@ -55,29 +55,55 @@ func (info SkillInfo) validate() error {
 
 type SkillsLoader struct {
 	workspace       string
-	workspaceSkills string // workspace skills (项目级别)
-	globalSkills    string // 全局 skills (~/.picoclaw/skills)
-	builtinSkills   string // 内置 skills
+	workspaceSkills []string // workspace skills (priority order)
+	globalSkills    string   // 全局 skills (~/.picoclaw/skills)
+	builtinSkills   string   // 内置 skills
 }
 
 func NewSkillsLoader(workspace string, globalSkills string, builtinSkills string) *SkillsLoader {
+	cwd, _ := os.Getwd()
 	return &SkillsLoader{
-		workspace:       workspace,
-		workspaceSkills: filepath.Join(workspace, "skills"),
-		globalSkills:    globalSkills, // ~/.picoclaw/skills
-		builtinSkills:   builtinSkills,
+		workspace: workspace,
+		workspaceSkills: []string{
+			filepath.Join(workspace, "skills"),
+			filepath.Join(cwd, ".agent", "skills"),
+			filepath.Join(cwd, ".agents", "skills"),
+			filepath.Join(workspace, ".agent", "skills"),
+			filepath.Join(workspace, ".agents", "skills"),
+		},
+		globalSkills:  globalSkills, // ~/.picoclaw/skills
+		builtinSkills: builtinSkills,
 	}
 }
 
 func (sl *SkillsLoader) ListSkills() []SkillInfo {
 	skills := make([]SkillInfo, 0)
 
-	if sl.workspaceSkills != "" {
-		if dirs, err := os.ReadDir(sl.workspaceSkills); err == nil {
+	for _, wsDir := range sl.workspaceSkills {
+		if wsDir == "" {
+			continue
+		}
+		// Ensure directory exists
+		if _, err := os.Stat(wsDir); os.IsNotExist(err) {
+			continue
+		}
+		if dirs, err := os.ReadDir(wsDir); err == nil {
 			for _, dir := range dirs {
 				if dir.IsDir() {
-					skillFile := filepath.Join(sl.workspaceSkills, dir.Name(), "SKILL.md")
+					skillFile := filepath.Join(wsDir, dir.Name(), "SKILL.md")
 					if _, err := os.Stat(skillFile); err == nil {
+						// 检查是否已加载 (优先级高的目录先加载)
+						exists := false
+						for _, s := range skills {
+							if s.Name == dir.Name() && s.Source == "workspace" {
+								exists = true
+								break
+							}
+						}
+						if exists {
+							continue
+						}
+
 						info := SkillInfo{
 							Name:   dir.Name(),
 							Path:   skillFile,
@@ -89,7 +115,7 @@ func (sl *SkillsLoader) ListSkills() []SkillInfo {
 							info.Name = metadata.Name
 						}
 						if err := info.validate(); err != nil {
-							slog.Warn("invalid skill from workspace", "name", info.Name, "error", err)
+							slog.Warn("invalid skill from workspace", "name", info.Name, "error", err, "path", skillFile)
 							continue
 						}
 						skills = append(skills, info)
@@ -183,8 +209,11 @@ func (sl *SkillsLoader) ListSkills() []SkillInfo {
 
 func (sl *SkillsLoader) LoadSkill(name string) (string, bool) {
 	// 1. 优先从 workspace skills 加载（项目级别）
-	if sl.workspaceSkills != "" {
-		skillFile := filepath.Join(sl.workspaceSkills, name, "SKILL.md")
+	for _, wsDir := range sl.workspaceSkills {
+		if wsDir == "" {
+			continue
+		}
+		skillFile := filepath.Join(wsDir, name, "SKILL.md")
 		if content, err := os.ReadFile(skillFile); err == nil {
 			return sl.stripFrontmatter(string(content)), true
 		}

@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"encoding/base64"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -206,10 +208,48 @@ func (cb *ContextBuilder) BuildMessages(
 	messages = append(messages, history...)
 
 	if strings.TrimSpace(currentMessage) != "" {
-		messages = append(messages, providers.Message{
+		msg := providers.Message{
 			Role:    "user",
 			Content: currentMessage,
-		})
+		}
+
+		// Process media attachments
+		for _, path := range media {
+			if path == "" {
+				continue
+			}
+
+			data, err := os.ReadFile(path)
+			if err != nil {
+				logger.ErrorCF("agent", "Failed to read media file for attachment", map[string]any{
+					"path":  path,
+					"error": err.Error(),
+				})
+				continue
+			}
+
+			mimeType := http.DetectContentType(data)
+			// Handle cases where DetectContentType might return octet-stream for images
+			if strings.HasSuffix(strings.ToLower(path), ".jpg") || strings.HasSuffix(strings.ToLower(path), ".jpeg") {
+				mimeType = "image/jpeg"
+			} else if strings.HasSuffix(strings.ToLower(path), ".png") {
+				mimeType = "image/png"
+			}
+
+			encoded := base64.StdEncoding.EncodeToString(data)
+			msg.Attachments = append(msg.Attachments, providers.Attachment{
+				MimeType: mimeType,
+				Data:     encoded,
+			})
+
+			logger.DebugCF("agent", "Attached media to user message", map[string]any{
+				"path":      path,
+				"mime_type": mimeType,
+				"size":      len(data),
+			})
+		}
+
+		messages = append(messages, msg)
 	}
 
 	return messages

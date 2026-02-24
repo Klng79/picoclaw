@@ -15,8 +15,6 @@ REMOTE_DIR="~/picoclaw/"
 # We exclude binaries for other platforms, but INCLUDE linux-armv7 for the Pi
 EXCLUDE=(
     "--exclude=.git/"
-    "--exclude=.agent/"
-    "--exclude=.agents/"
     "--exclude=node_modules/"
     "--exclude=tmp/"
     "--exclude=*.exe"

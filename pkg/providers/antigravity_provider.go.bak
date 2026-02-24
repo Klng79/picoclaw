@@ -170,14 +170,8 @@ type antigravityPart struct {
 	Text                  string                       `json:"text,omitempty"`
 	ThoughtSignature      string                       `json:"thoughtSignature,omitempty"`
 	ThoughtSignatureSnake string                       `json:"thought_signature,omitempty"`
-	InlineData            *antigravityInlineData       `json:"inline_data,omitempty"`
 	FunctionCall          *antigravityFunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse      *antigravityFunctionResponse `json:"functionResponse,omitempty"`
-}
-
-type antigravityInlineData struct {
-	MimeType string `json:"mime_type"`
-	Data     string `json:"data"`
 }
 
 type antigravityFunctionCall struct {
@@ -241,21 +235,10 @@ func (p *AntigravityProvider) buildRequest(
 					}},
 				})
 			} else {
-				content := antigravityContent{
-					Role: "user",
-				}
-				if msg.Content != "" {
-					content.Parts = append(content.Parts, antigravityPart{Text: msg.Content})
-				}
-				for _, att := range msg.Attachments {
-					content.Parts = append(content.Parts, antigravityPart{
-						InlineData: &antigravityInlineData{
-							MimeType: att.MimeType,
-							Data:     att.Data,
-						},
-					})
-				}
-				req.Contents = append(req.Contents, content)
+				req.Contents = append(req.Contents, antigravityContent{
+					Role:  "user",
+					Parts: []antigravityPart{{Text: msg.Content}},
+				})
 			}
 		case "assistant":
 			content := antigravityContent{

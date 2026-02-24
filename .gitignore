@@ -47,3 +47,7 @@ dist/
 
 # Personal
 note.txt
+
+# Agents
+.agent/
+.agents/
