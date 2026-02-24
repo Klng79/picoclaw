@@ -18,6 +18,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/cron"
+	"github.com/sipeed/picoclaw/pkg/dashboard"
 	"github.com/sipeed/picoclaw/pkg/devices"
 	"github.com/sipeed/picoclaw/pkg/health"
 	"github.com/sipeed/picoclaw/pkg/heartbeat"
@@ -57,6 +58,15 @@ func gatewayCmd() {
 
 	msgBus := bus.NewMessageBus()
 	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
+
+	// Ensure workspace exists and enable file logging
+	workspace := cfg.WorkspacePath()
+	os.MkdirAll(workspace, 0755)
+	logPath := filepath.Join(workspace, "picoclaw.log")
+	if err := logger.EnableFileLogging(logPath); err != nil {
+		fmt.Printf("Warning: Could not enable file logging: %v\n", err)
+	}
+	defer logger.DisableFileLogging()
 
 	// Print agent startup info
 	fmt.Println("\n📦 Agent Status:")
@@ -198,12 +208,18 @@ func gatewayCmd() {
 	}
 
 	healthServer := health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
+	
+	// Register Dashboard API
+	dashboardAPI := dashboard.NewAPI(getConfigPath(), cfg)
+	dashboardAPI.RegisterRoutes(healthServer.Mux())
+
 	go func() {
 		if err := healthServer.Start(); err != nil && err != http.ErrServerClosed {
 			logger.ErrorCF("health", "Health server error", map[string]any{"error": err.Error()})
 		}
 	}()
 	fmt.Printf("✓ Health endpoints available at http://%s:%d/health and /ready\n", cfg.Gateway.Host, cfg.Gateway.Port)
+	fmt.Printf("✓ Dashboard API available at http://%s:%d/api/v1/system/status\n", cfg.Gateway.Host, cfg.Gateway.Port)
 
 	go agentLoop.Run(ctx)
 

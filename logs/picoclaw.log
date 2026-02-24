@@ -1,0 +1,1 @@
+{"level":"INFO","timestamp":"2026-02-24T00:50:00Z","component":"agent","message":"Agent initialized","fields":{"skills_available":15,"skills_total":15,"tools_count":8}}

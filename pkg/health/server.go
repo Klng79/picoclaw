@@ -11,6 +11,7 @@ import (
 
 type Server struct {
 	server    *http.Server
+	mux       *http.ServeMux
 	mu        sync.RWMutex
 	ready     bool
 	checks    map[string]Check
@@ -33,6 +34,7 @@ type StatusResponse struct {
 func NewServer(host string, port int) *Server {
 	mux := http.NewServeMux()
 	s := &Server{
+		mux:       mux,
 		ready:     false,
 		checks:    make(map[string]Check),
 		startTime: time.Now(),
@@ -50,6 +52,10 @@ func NewServer(host string, port int) *Server {
 	}
 
 	return s
+}
+
+func (s *Server) Mux() *http.ServeMux {
+	return s.mux
 }
 
 func (s *Server) Start() error {

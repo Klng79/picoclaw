@@ -3,8 +3,8 @@ Description=PicoClaw Gateway Service
 After=network.target
 
 [Service]
-ExecStart=/home/pi/.local/bin/picoclaw gateway
-WorkingDirectory=/home/pi
+ExecStart=/home/pi/picoclaw/build/picoclaw-linux-armv7 gateway
+WorkingDirectory=/home/pi/picoclaw
 Restart=always
 RestartSec=10
 User=pi
