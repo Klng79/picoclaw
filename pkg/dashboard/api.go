@@ -8,9 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/skills"
+	"github.com/sipeed/picoclaw/pkg/tools"
 )
 
 var startTime = time.Now()
@@ -20,9 +22,11 @@ type API struct {
 	cfg       *config.Config
 	loader    *skills.SkillsLoader
 	installer *skills.SkillInstaller
+	channels  *channels.Manager
+	tools     *tools.ToolRegistry
 }
 
-func NewAPI(cfgFile string, cfg *config.Config) *API {
+func NewAPI(cfgFile string, cfg *config.Config, ch *channels.Manager, tr *tools.ToolRegistry) *API {
 	globalDir := filepath.Dir(cfgFile)
 	workspace := cfg.WorkspacePath()
 	return &API{
@@ -30,6 +34,8 @@ func NewAPI(cfgFile string, cfg *config.Config) *API {
 		cfg:       cfg,
 		loader:    skills.NewSkillsLoader(workspace, filepath.Join(globalDir, "skills"), filepath.Join(globalDir, "picoclaw", "skills")),
 		installer: skills.NewSkillInstaller(workspace),
+		channels:  ch,
+		tools:     tr,
 	}
 }
 
@@ -43,6 +49,12 @@ func (api *API) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/skills/available", api.handleAvailableSkills)
 	mux.HandleFunc("/api/v1/skills/install", api.handleInstallSkill)
 	mux.HandleFunc("/api/v1/skills/uninstall", api.handleUninstallSkill)
+
+	// Insights endpoints
+	mux.HandleFunc("/api/v1/models", api.handleModels)
+	mux.HandleFunc("/api/v1/channels", api.handleChannels)
+	mux.HandleFunc("/api/v1/providers", api.handleProviders)
+	mux.HandleFunc("/api/v1/tools", api.handleTools)
 
 	// Serve the React matching /dashboard/
 	mux.Handle("/dashboard/", http.StripPrefix("/dashboard/", http.FileServer(getStaticFS())))
@@ -141,7 +153,59 @@ func (api *API) handleUninstallSkill(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 }
 
-// ... keeping handleLogs, handleSystemStatus, handleConfig the same ...
+func (api *API) handleModels(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(api.cfg.ModelList)
+}
+
+func (api *API) handleChannels(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	
+	status := make(map[string]any)
+	if api.channels != nil {
+		status = api.channels.GetStatus()
+	}
+	json.NewEncoder(w).Encode(status)
+}
+
+func (api *API) handleProviders(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	
+	// Expose non-sensitive provider configuration/status
+	// For deeper status, we could check active clients, but they are instantiated ephemerally right now.
+	// We'll return the config for now. Real healthchecks could be added later.
+	json.NewEncoder(w).Encode(api.cfg.Providers)
+}
+
+func (api *API) handleTools(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	
+	toolsList := []map[string]any{}
+	if api.tools != nil {
+		toolsList = api.tools.GetDefinitions()
+	}
+	json.NewEncoder(w).Encode(toolsList)
+}
 
 // handleLogs returns the last N lines of the log file
 func (api *API) handleLogs(w http.ResponseWriter, r *http.Request) {

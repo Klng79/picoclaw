@@ -208,6 +208,13 @@ func (al *AgentLoop) Stop() {
 	al.running.Store(false)
 }
 
+func (al *AgentLoop) GetTools() *tools.ToolRegistry {
+	if agent := al.registry.GetDefaultAgent(); agent != nil {
+		return agent.Tools
+	}
+	return nil
+}
+
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {
 	for _, agentID := range al.registry.ListAgentIDs() {
 		if agent, ok := al.registry.GetAgent(agentID); ok {

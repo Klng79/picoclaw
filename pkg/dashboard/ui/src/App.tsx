@@ -4,6 +4,10 @@ import { Overview } from './components/Overview';
 import { Settings } from './components/Settings';
 import { Logs } from './components/Logs';
 import { Skills } from './components/Skills';
+import { Models } from './components/Models';
+import { Channels } from './components/Channels';
+import { Providers } from './components/Providers';
+import { Tools } from './components/Tools';
 
 function App() {
   const [currentTab, setTab] = useState('overview');
@@ -14,9 +18,13 @@ function App() {
       
       <main className="main-content">
         {currentTab === 'overview' && <Overview />}
+        {currentTab === 'channels' && <Channels />}
+        {currentTab === 'models' && <Models />}
+        {currentTab === 'providers' && <Providers />}
+        {currentTab === 'tools' && <Tools />}
+        {currentTab === 'skills' && <Skills />}
         {currentTab === 'settings' && <Settings />}
         {currentTab === 'logs' && <Logs />}
-        {currentTab === 'skills' && <Skills />}
       </main>
     </>
   );

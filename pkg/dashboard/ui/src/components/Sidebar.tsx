@@ -1,5 +1,5 @@
 
-import { LayoutDashboard, Settings, ScrollText, Binary } from 'lucide-react';
+import { LayoutDashboard, Settings, ScrollText, Binary, Cpu, MessageSquare, Server, Wrench } from 'lucide-react';
 
 interface SidebarProps {
   currentTab: string;
@@ -9,9 +9,13 @@ interface SidebarProps {
 export function Sidebar({ currentTab, setTab }: SidebarProps) {
   const navItems = [
     { id: 'overview', label: 'Overview', icon: <LayoutDashboard size={20} /> },
+    { id: 'channels', label: 'Channels', icon: <MessageSquare size={20} /> },
+    { id: 'models', label: 'Models', icon: <Cpu size={20} /> },
+    { id: 'providers', label: 'Providers', icon: <Server size={20} /> },
+    { id: 'tools', label: 'Tools', icon: <Wrench size={20} /> },
+    { id: 'skills', label: 'Skills', icon: <Binary size={20} /> },
     { id: 'settings', label: 'Settings', icon: <Settings size={20} /> },
     { id: 'logs', label: 'Logs', icon: <ScrollText size={20} /> },
-    { id: 'skills', label: 'Skills', icon: <Binary size={20} /> },
   ];
 
   return (
