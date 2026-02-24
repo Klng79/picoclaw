@@ -211,9 +211,125 @@ func (sm *Manager) loadSQLite() error {
 	return json.Unmarshal([]byte(val), sm.state)
 }
 
+func (sm *Manager) GetMessageCount() int {
+	if sm.db == nil {
+		return 0
+	}
+	var count int
+	err := sm.db.QueryRow("SELECT COUNT(*) FROM messages").Scan(&count)
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
+func (sm *Manager) GetSessionCount() int {
+	if sm.db == nil {
+		return 0
+	}
+	var count int
+	err := sm.db.QueryRow("SELECT COUNT(*) FROM sessions").Scan(&count)
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
+func (sm *Manager) GetDatabasePath() string {
+	return filepath.Join(sm.workspace, "picoclaw.db")
+}
+
 func serializeState(s *State) string {
 	data, _ := json.Marshal(s)
 	return string(data)
+}
+
+var allowedTables = map[string]string{
+	"global_state": "key",
+	"sessions":     "key",
+	"messages":     "id",
+}
+
+// GetTables returns the list of allowed tables for the dashboard explorer.
+func (sm *Manager) GetTables() []string {
+	var tables []string
+	for t := range allowedTables {
+		tables = append(tables, t)
+	}
+	return tables
+}
+
+// GetTableRows returns up to 100 rows from a specified table.
+func (sm *Manager) GetTableRows(tableName string) ([]map[string]interface{}, error) {
+	if sm.db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+	if _, ok := allowedTables[tableName]; !ok {
+		return nil, fmt.Errorf("invalid table name")
+	}
+
+	rows, err := sm.db.Query(fmt.Sprintf("SELECT * FROM %s ORDER BY rowid DESC LIMIT 100", tableName))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+
+	var result []map[string]interface{}
+	for rows.Next() {
+		columns := make([]interface{}, len(cols))
+		columnPointers := make([]interface{}, len(cols))
+		for i := range columns {
+			columnPointers[i] = &columns[i]
+		}
+
+		if err := rows.Scan(columnPointers...); err != nil {
+			return nil, err
+		}
+
+		m := make(map[string]interface{})
+		for i, colName := range cols {
+			val := columnPointers[i].(*interface{})
+			if b, ok := (*val).([]byte); ok {
+				m[colName] = string(b)
+			} else {
+				m[colName] = *val
+			}
+		}
+		result = append(result, m)
+	}
+	return result, nil
+}
+
+// DeleteRow deletes a single row by its primary key.
+func (sm *Manager) DeleteRow(tableName string, idValue string) error {
+	if sm.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	idColumn, ok := allowedTables[tableName]
+	if !ok {
+		return fmt.Errorf("invalid table name")
+	}
+
+	_, err := sm.db.Exec(fmt.Sprintf("DELETE FROM %s WHERE %s = ?", tableName, idColumn), idValue)
+	return err
+}
+
+// WipeTable deletes all rows from a table.
+func (sm *Manager) WipeTable(tableName string) error {
+	if sm.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	if _, ok := allowedTables[tableName]; !ok {
+		return fmt.Errorf("invalid table name")
+	}
+
+	_, err := sm.db.Exec(fmt.Sprintf("DELETE FROM %s", tableName))
+	return err
 }
 
 func (sm *Manager) Close() error {

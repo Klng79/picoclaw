@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -15,6 +16,12 @@ type SystemStats struct {
 	RAMUsed  uint64  `json:"ram_used"`
 	RAMUsage float64 `json:"ram_usage"`
 	TempC    float64 `json:"temp_c"`
+}
+
+type DiskStats struct {
+	Total uint64  `json:"total"`
+	Used  uint64  `json:"used"`
+	Usage float64 `json:"usage"`
 }
 
 var (
@@ -88,8 +95,8 @@ func GetSystemStats() SystemStats {
 						stats.CPUUsage = 100.0 * (1.0 - idleDelta/totalDelta)
 						lastCPUUsage = stats.CPUUsage
 					} else {
-                        stats.CPUUsage = lastCPUUsage
-                    }
+						stats.CPUUsage = lastCPUUsage
+					}
 				} else {
 					stats.CPUUsage = 0.0
 				}
@@ -100,8 +107,8 @@ func GetSystemStats() SystemStats {
 			}
 		}
 	} else {
-        stats.CPUUsage = lastCPUUsage
-    }
+		stats.CPUUsage = lastCPUUsage
+	}
 
 	// 3. Get Temperature
 	if tempContent, err := os.ReadFile("/sys/class/thermal/thermal_zone0/temp"); err == nil {
@@ -111,4 +118,25 @@ func GetSystemStats() SystemStats {
 	}
 
 	return stats
+}
+
+func GetDiskUsage(path string) (DiskStats, error) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		return DiskStats{}, err
+	}
+
+	total := stat.Blocks * uint64(stat.Bsize)
+	free := stat.Bfree * uint64(stat.Bsize)
+	used := total - free
+	usage := 0.0
+	if total > 0 {
+		usage = float64(used) / float64(total) * 100.0
+	}
+
+	return DiskStats{
+		Total: total,
+		Used:  used,
+		Usage: usage,
+	}, nil
 }

@@ -9,6 +9,15 @@ interface SystemStats {
   ram_usage: number;
   temp: number;
   uptime_seconds: number;
+  disk_total?: number;
+  disk_used?: number;
+  disk_usage?: number;
+  db_size_bytes?: number;
+  total_messages?: number;
+  total_sessions?: number;
+  primary_model?: string;
+  active_channels_count?: number;
+  total_tools_count?: number;
 }
 
 export function Overview() {
@@ -43,6 +52,15 @@ export function Overview() {
   };
 
   const getMegabytes = (bytes: number) => (bytes / 1024 / 1024).toFixed(0);
+  const getGigabytes = (bytes: number) => (bytes / 1024 / 1024 / 1024).toFixed(1);
+  
+  const formatBytes = (bytes: number) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
 
   return (
     <div>
@@ -79,14 +97,60 @@ export function Overview() {
           unit="°C"
           max={100}
         />
+
+        <Gauge 
+          value={stats?.disk_usage || 0} 
+          label="Disk Usage" 
+          color="var(--accent-cyan)" 
+          unit="%"
+          max={100}
+        />
       </div>
-      
-      <h3 style={{ marginTop: '3rem', marginBottom: '1rem', color: 'var(--text-muted)' }}>System Logs (Recent)</h3>
-      <div className="glass-panel terminal-card">
-        <div>[INFO] PicoClaw Gateway started</div>
-        <div>[INFO] Health endpoints available</div>
-        <div>[INFO] Dashboard API available</div>
-        <div style={{ color: 'var(--text-muted)' }}>Polling logs natively via API is coming soon...</div>
+
+      <div className="stats-grid" style={{ marginTop: '2rem', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
+        <div className="glass-panel" style={{ padding: '1.5rem' }}>
+            <h3 style={{ marginBottom: '1rem', color: 'var(--text-muted)', fontSize: '1rem', textTransform: 'uppercase', letterSpacing: '1px' }}>System Summary</h3>
+            <div style={{ display: 'grid', gap: '1rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Primary Model</span>
+                    <span style={{ color: 'var(--accent-cyan)', fontWeight: 600 }}>{stats?.primary_model || '--'}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Active Channels</span>
+                    <span>{stats?.active_channels_count || 0} Enabled</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Loaded Tools</span>
+                    <span>{stats?.total_tools_count || 0} Registered</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Disk Capacity</span>
+                    <span>{stats?.disk_total ? `${getGigabytes(stats.disk_total)} GB` : '--'}</span>
+                </div>
+            </div>
+        </div>
+
+        <div className="glass-panel" style={{ padding: '1.5rem' }}>
+            <h3 style={{ marginBottom: '1rem', color: 'var(--text-muted)', fontSize: '1rem', textTransform: 'uppercase', letterSpacing: '1px' }}>Database & Persistence</h3>
+            <div style={{ display: 'grid', gap: '1rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Database Size</span>
+                    <span style={{ color: 'var(--accent-violet)', fontWeight: 600 }}>{stats?.db_size_bytes ? formatBytes(stats.db_size_bytes) : '--'}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Total Messages</span>
+                    <span>{stats?.total_messages || 0} Msg</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Stored Sessions</span>
+                    <span>{stats?.total_sessions || 0} Threads</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Storage Mode</span>
+                    <span style={{ fontSize: '0.8rem', padding: '2px 8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px' }}>SQLite 3</span>
+                </div>
+            </div>
+        </div>
       </div>
     </div>
   );

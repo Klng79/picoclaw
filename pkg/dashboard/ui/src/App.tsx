@@ -8,6 +8,7 @@ import { Models } from './components/Models';
 import { Channels } from './components/Channels';
 import { Providers } from './components/Providers';
 import { Tools } from './components/Tools';
+import { Database } from './components/Database';
 
 function App() {
   const [currentTab, setTab] = useState('overview');
@@ -22,6 +23,7 @@ function App() {
         {currentTab === 'models' && <Models />}
         {currentTab === 'providers' && <Providers />}
         {currentTab === 'tools' && <Tools />}
+        {currentTab === 'database' && <Database />}
         {currentTab === 'skills' && <Skills />}
         {currentTab === 'settings' && <Settings />}
         {currentTab === 'logs' && <Logs />}

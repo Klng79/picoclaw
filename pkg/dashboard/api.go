@@ -3,6 +3,7 @@ package dashboard
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/skills"
+	"github.com/sipeed/picoclaw/pkg/state"
 	"github.com/sipeed/picoclaw/pkg/tools"
 )
 
@@ -24,9 +26,10 @@ type API struct {
 	installer *skills.SkillInstaller
 	channels  *channels.Manager
 	tools     *tools.ToolRegistry
+	state     *state.Manager
 }
 
-func NewAPI(cfgFile string, cfg *config.Config, ch *channels.Manager, tr *tools.ToolRegistry) *API {
+func NewAPI(cfgFile string, cfg *config.Config, ch *channels.Manager, tr *tools.ToolRegistry, sm *state.Manager) *API {
 	globalDir := filepath.Dir(cfgFile)
 	workspace := cfg.WorkspacePath()
 	return &API{
@@ -36,6 +39,7 @@ func NewAPI(cfgFile string, cfg *config.Config, ch *channels.Manager, tr *tools.
 		installer: skills.NewSkillInstaller(workspace),
 		channels:  ch,
 		tools:     tr,
+		state:     sm,
 	}
 }
 
@@ -46,9 +50,15 @@ func (api *API) RegisterRoutes(mux *http.ServeMux) {
 	
 	// Skills endpoints
 	mux.HandleFunc("/api/v1/skills/installed", api.handleInstalledSkills)
-	mux.HandleFunc("/api/v1/skills/available", api.handleAvailableSkills)
-	mux.HandleFunc("/api/v1/skills/install", api.handleInstallSkill)
-	mux.HandleFunc("/api/v1/skills/uninstall", api.handleUninstallSkill)
+	mux.HandleFunc("GET /api/v1/skills/available", api.handleAvailableSkills)
+	mux.HandleFunc("POST /api/v1/skills/install", api.handleInstallSkill)
+	mux.HandleFunc("POST /api/v1/skills/uninstall", api.handleUninstallSkill)
+
+	// Database api
+	mux.HandleFunc("GET /api/v1/db/tables", api.handleGetTables)
+	mux.HandleFunc("GET /api/v1/db/query", api.handleGetTableRows)
+	mux.HandleFunc("DELETE /api/v1/db/row", api.handleDeleteRow)
+	mux.HandleFunc("DELETE /api/v1/db/table", api.handleWipeTable)
 
 	// Insights endpoints
 	mux.HandleFunc("/api/v1/models", api.handleModels)
@@ -266,6 +276,31 @@ func (api *API) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 		"temp":           stats.TempC,
 	}
 
+	// Add Disk Usage
+	if disk, err := GetDiskUsage("/"); err == nil {
+		response["disk_total"] = disk.Total
+		response["disk_used"] = disk.Used
+		response["disk_usage"] = disk.Usage
+	}
+
+	// Add Database Metrics
+	if api.state != nil {
+		response["total_messages"] = api.state.GetMessageCount()
+		response["total_sessions"] = api.state.GetSessionCount()
+		if info, err := os.Stat(api.state.GetDatabasePath()); err == nil {
+			response["db_size_bytes"] = info.Size()
+		}
+	}
+
+	// Add Metadata
+	response["primary_model"] = api.cfg.Agents.Defaults.Model
+	if api.channels != nil {
+		response["active_channels_count"] = len(api.channels.GetEnabledChannels())
+	}
+	if api.tools != nil {
+		response["total_tools_count"] = api.tools.Count()
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
@@ -310,4 +345,90 @@ func (api *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+}
+
+func (api *API) handleGetTables(w http.ResponseWriter, r *http.Request) {
+	if api.state == nil {
+		http.Error(w, "Database not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	tables := api.state.GetTables()
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tables)
+}
+
+func (api *API) handleGetTableRows(w http.ResponseWriter, r *http.Request) {
+	if api.state == nil {
+		http.Error(w, "Database not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	tableName := r.URL.Query().Get("table")
+	if tableName == "" {
+		http.Error(w, "Missing table parameter", http.StatusBadRequest)
+		return
+	}
+
+	rows, err := api.state.GetTableRows(tableName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(rows)
+}
+
+func (api *API) handleDeleteRow(w http.ResponseWriter, r *http.Request) {
+	if api.state == nil {
+		http.Error(w, "Database not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	tableName := r.URL.Query().Get("table")
+	idValue := r.URL.Query().Get("id")
+
+	if tableName == "" || idValue == "" {
+		http.Error(w, "Missing table or id parameters", http.StatusBadRequest)
+		return
+	}
+
+	if err := api.state.DeleteRow(tableName, idValue); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+}
+
+func (api *API) handleWipeTable(w http.ResponseWriter, r *http.Request) {
+	if api.state == nil {
+		http.Error(w, "Database not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req struct {
+		Table string `json:"table"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Table == "" {
+		http.Error(w, "Missing table parameter", http.StatusBadRequest)
+		return
+	}
+
+	if err := api.state.WipeTable(req.Table); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 }
