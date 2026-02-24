@@ -33,6 +33,39 @@ func TestSaveStore_FilePermissions(t *testing.T) {
 	}
 }
 
+func TestLoadStore_EdgeCases(t *testing.T) {
+	tmpDir := t.TempDir()
+	storePath := filepath.Join(tmpDir, "jobs.json")
+
+	// Case 1: File doesn't exist
+	cs := NewCronService(storePath, nil)
+	if len(cs.store.Jobs) != 0 {
+		t.Errorf("expected empty store for non-existent file, got %d jobs", len(cs.store.Jobs))
+	}
+
+	// Case 2: Empty file
+	if err := os.WriteFile(storePath, []byte(""), 0o600); err != nil {
+		t.Fatalf("failed to write empty file: %v", err)
+	}
+	if err := cs.Load(); err != nil {
+		t.Errorf("Load failed for empty file: %v", err)
+	}
+	if len(cs.store.Jobs) != 0 {
+		t.Errorf("expected empty store for empty file, got %d jobs", len(cs.store.Jobs))
+	}
+
+	// Case 3: Corrupted JSON
+	if err := os.WriteFile(storePath, []byte("{invalid json"), 0o600); err != nil {
+		t.Fatalf("failed to write corrupted file: %v", err)
+	}
+	if err := cs.Load(); err != nil {
+		t.Errorf("Load failed for corrupted file: %v", err)
+	}
+	if len(cs.store.Jobs) != 0 {
+		t.Errorf("expected empty store for corrupted file, got %d jobs", len(cs.store.Jobs))
+	}
+}
+
 func int64Ptr(v int64) *int64 {
 	return &v
 }

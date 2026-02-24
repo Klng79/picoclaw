@@ -326,7 +326,16 @@ func (cs *CronService) loadStore() error {
 		return err
 	}
 
-	return json.Unmarshal(data, cs.store)
+	if len(data) == 0 {
+		return nil
+	}
+
+	if err := json.Unmarshal(data, cs.store); err != nil {
+		log.Printf("[cron] warning: failed to unmarshal store from %s: %v. Starting with empty store.", cs.storePath, err)
+		return nil
+	}
+
+	return nil
 }
 
 func (cs *CronService) saveStoreUnsafe() error {
@@ -457,15 +466,24 @@ func (cs *CronService) ListJobs(includeDisabled bool) []CronJob {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
 
+	jobs := cs.store.Jobs
+	if jobs == nil {
+		jobs = make([]CronJob, 0)
+	}
+
 	if includeDisabled {
-		return cs.store.Jobs
+		return jobs
 	}
 
 	var enabled []CronJob
-	for _, job := range cs.store.Jobs {
+	for _, job := range jobs {
 		if job.Enabled {
 			enabled = append(enabled, job)
 		}
+	}
+	
+	if enabled == nil {
+		enabled = make([]CronJob, 0)
 	}
 
 	return enabled
@@ -487,6 +505,23 @@ func (cs *CronService) Status() map[string]any {
 		"jobs":         len(cs.store.Jobs),
 		"nextWakeAtMS": cs.getNextWakeMS(),
 	}
+}
+
+func (cs *CronService) GetJob(jobID string) *CronJob {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+
+	for i := range cs.store.Jobs {
+		if cs.store.Jobs[i].ID == jobID {
+			return &cs.store.Jobs[i]
+		}
+	}
+	return nil
+}
+
+func (cs *CronService) TestJob(jobID string) error {
+	cs.executeJobByID(jobID)
+	return nil
 }
 
 func generateID() string {

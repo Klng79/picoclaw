@@ -210,7 +210,7 @@ func gatewayCmd() {
 	healthServer := health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
 	
 	// Register Dashboard API
-	dashboardAPI := dashboard.NewAPI(getConfigPath(), cfg, channelManager, agentLoop.GetTools(), stateManager)
+	dashboardAPI := dashboard.NewAPI(getConfigPath(), cfg, channelManager, agentLoop.GetTools(), stateManager, cronService)
 	dashboardAPI.RegisterRoutes(healthServer.Mux())
 
 	go func() {

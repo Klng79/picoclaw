@@ -11,6 +11,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/cron"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/state"
@@ -27,9 +28,10 @@ type API struct {
 	channels  *channels.Manager
 	tools     *tools.ToolRegistry
 	state     *state.Manager
+	cron      *cron.CronService
 }
 
-func NewAPI(cfgFile string, cfg *config.Config, ch *channels.Manager, tr *tools.ToolRegistry, sm *state.Manager) *API {
+func NewAPI(cfgFile string, cfg *config.Config, ch *channels.Manager, tr *tools.ToolRegistry, sm *state.Manager, cs *cron.CronService) *API {
 	workspace := cfg.WorkspacePath()
 	
 	// Use standard PicoClaw ~/.picoclaw path for global skills
@@ -47,6 +49,7 @@ func NewAPI(cfgFile string, cfg *config.Config, ch *channels.Manager, tr *tools.
 		channels:  ch,
 		tools:     tr,
 		state:     sm,
+		cron:      cs,
 	}
 }
 
@@ -73,8 +76,33 @@ func (api *API) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/providers", api.handleProviders)
 	mux.HandleFunc("/api/v1/tools", api.handleTools)
 
+	// Cron endpoints
+	mux.HandleFunc("GET /api/v1/cron/jobs", api.handleListCronJobs)
+	mux.HandleFunc("POST /api/v1/cron/jobs", api.handleAddUpdateCronJob)
+	mux.HandleFunc("DELETE /api/v1/cron/jobs", api.handleDeleteCronJob)
+	mux.HandleFunc("POST /api/v1/cron/jobs/test", api.handleTestCronJob)
+	mux.HandleFunc("POST /api/v1/cron/jobs/enable", api.handleEnableCronJob)
+
 	// Serve the React matching /dashboard/
-	mux.Handle("/dashboard/", http.StripPrefix("/dashboard/", http.FileServer(getStaticFS())))
+	staticFS := getStaticFS()
+	fileServer := http.StripPrefix("/dashboard/", http.FileServer(staticFS))
+
+	mux.HandleFunc("/dashboard/", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/dashboard/")
+		if path != "" {
+			// Check if file exists in the embedded FS
+			f, err := staticFS.Open(path)
+			if err != nil {
+				// File doesn't exist (e.g. /dashboard/cron), serve index.html for SPA routing
+				r.URL.Path = "/dashboard/"
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+			f.Close()
+		}
+		fileServer.ServeHTTP(w, r)
+	})
+
 	// Handle bare /dashboard with redirect
 	mux.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/dashboard/", http.StatusFound)
@@ -438,4 +466,127 @@ func (api *API) handleWipeTable(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+}
+
+func (api *API) handleListCronJobs(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if api.cron == nil {
+		http.Error(w, "Cron service not available", http.StatusServiceUnavailable)
+		return
+	}
+	jobs := api.cron.ListJobs(true)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(jobs)
+}
+
+func (api *API) handleAddUpdateCronJob(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if api.cron == nil {
+		http.Error(w, "Cron service not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	var job cron.CronJob
+	if err := json.NewDecoder(r.Body).Decode(&job); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if job.ID == "" {
+		// Add new job
+		newJob, err := api.cron.AddJob(
+			job.Name,
+			job.Schedule,
+			job.Payload.Message,
+			job.Payload.Deliver,
+			job.Payload.Channel,
+			job.Payload.To,
+		)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		job = *newJob
+	} else {
+		// Update existing job
+		if err := api.cron.UpdateJob(&job); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(job)
+}
+
+func (api *API) handleDeleteCronJob(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if api.cron == nil {
+		http.Error(w, "Cron service not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "Missing id parameter", http.StatusBadRequest)
+		return
+	}
+
+	if success := api.cron.RemoveJob(id); !success {
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+}
+
+func (api *API) handleTestCronJob(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if api.cron == nil {
+		http.Error(w, "Cron service not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := api.cron.TestJob(req.ID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+}
+
+func (api *API) handleEnableCronJob(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if api.cron == nil {
+		http.Error(w, "Cron service not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req struct {
+		ID      string `json:"id"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	job := api.cron.EnableJob(req.ID, req.Enabled)
+	if job == nil {
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(job)
 }

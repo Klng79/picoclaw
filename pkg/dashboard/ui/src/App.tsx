@@ -9,6 +9,7 @@ import { Channels } from './components/Channels';
 import { Providers } from './components/Providers';
 import { Tools } from './components/Tools';
 import { Database } from './components/Database';
+import { CronJobs } from './components/CronJobs';
 
 function App() {
   const [currentTab, setTab] = useState('overview');
@@ -25,6 +26,7 @@ function App() {
         {currentTab === 'tools' && <Tools />}
         {currentTab === 'database' && <Database />}
         {currentTab === 'skills' && <Skills />}
+        {currentTab === 'cron' && <CronJobs />}
         {currentTab === 'settings' && <Settings />}
         {currentTab === 'logs' && <Logs />}
       </main>
