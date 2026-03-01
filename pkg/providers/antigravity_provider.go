@@ -64,6 +64,9 @@ func (p *AntigravityProvider) Chat(
 	model = strings.TrimPrefix(model, "google-antigravity/")
 	model = strings.TrimPrefix(model, "antigravity/")
 
+	// Force only gemini-flash (gemini-3-flash) as requested by user
+	model = "gemini-3-flash"
+
 	logger.DebugCF("provider.antigravity", "Starting chat", map[string]any{
 		"model":     model,
 		"project":   projectID,

@@ -47,15 +47,47 @@ func (m *Manager) initChannels() error {
 	logger.InfoC("channels", "Initializing channel manager")
 
 	if m.config.Channels.Telegram.Enabled && m.config.Channels.Telegram.Token != "" {
-		logger.DebugC("channels", "Attempting to initialize Telegram channel")
-		telegram, err := NewTelegramChannel(m.config, m.bus)
+		logger.DebugC("channels", "Attempting to initialize primary Telegram channel")
+		name := "telegram"
+		if m.config.Channels.Telegram.Name != "" {
+			name = m.config.Channels.Telegram.Name
+		}
+		telegram, err := NewTelegramChannel(name, m.config.Channels.Telegram, m.bus)
 		if err != nil {
-			logger.ErrorCF("channels", "Failed to initialize Telegram channel", map[string]any{
+			logger.ErrorCF("channels", "Failed to initialize primary Telegram channel", map[string]any{
 				"error": err.Error(),
 			})
 		} else {
-			m.channels["telegram"] = telegram
-			logger.InfoC("channels", "Telegram channel enabled successfully")
+			telegram.SetCommander(NewTelegramCommands(telegram.bot, m.config))
+			m.channels[name] = telegram
+			logger.InfoCF("channels", "Primary Telegram channel enabled successfully", map[string]any{
+				"name": name,
+			})
+		}
+	}
+
+	for i, tCfg := range m.config.Channels.TelegramAdditional {
+		if tCfg.Enabled && tCfg.Token != "" {
+			name := fmt.Sprintf("telegram_%d", i+1)
+			if tCfg.Name != "" {
+				name = tCfg.Name
+			}
+			logger.DebugCF("channels", "Attempting to initialize additional Telegram channel", map[string]any{
+				"name": name,
+			})
+			telegram, err := NewTelegramChannel(name, tCfg, m.bus)
+			if err != nil {
+				logger.ErrorCF("channels", "Failed to initialize additional Telegram channel", map[string]any{
+					"name":  name,
+					"error": err.Error(),
+				})
+			} else {
+				telegram.SetCommander(NewTelegramCommands(telegram.bot, m.config))
+				m.channels[name] = telegram
+				logger.InfoCF("channels", "Additional Telegram channel enabled successfully", map[string]any{
+					"name": name,
+				})
+			}
 		}
 	}
 

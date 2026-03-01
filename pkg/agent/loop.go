@@ -176,6 +176,17 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 			response, err := al.processMessage(ctx, msg)
 			if err != nil {
 				response = fmt.Sprintf("Error processing message: %v", err)
+				// Persist error response to session history if possible
+				if al.registry != nil {
+					if agent, ok := al.registry.GetAgent(msg.SenderID); ok {
+						agent.Sessions.AddMessage(msg.SessionKey, "assistant", response)
+						agent.Sessions.Save(msg.SessionKey)
+					} else if defaultAgent := al.registry.GetDefaultAgent(); defaultAgent != nil {
+						// Fallback to default agent if specific agent not found
+						defaultAgent.Sessions.AddMessage(msg.SessionKey, "assistant", response)
+						defaultAgent.Sessions.Save(msg.SessionKey)
+					}
+				}
 			}
 
 			if response != "" {

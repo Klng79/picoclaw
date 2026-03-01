@@ -182,7 +182,8 @@ type AgentDefaults struct {
 
 type ChannelsConfig struct {
 	WhatsApp WhatsAppConfig `json:"whatsapp"`
-	Telegram TelegramConfig `json:"telegram"`
+	Telegram PrimaryTelegramConfig `json:"telegram"`
+	TelegramAdditional []TelegramConfig `json:"telegram_additional,omitempty"`
 	Feishu   FeishuConfig   `json:"feishu"`
 	Discord  DiscordConfig  `json:"discord"`
 	MaixCam  MaixCamConfig  `json:"maixcam"`
@@ -202,7 +203,16 @@ type WhatsAppConfig struct {
 }
 
 type TelegramConfig struct {
+	Enabled   bool                `json:"enabled"`
+	Name      string              `json:"name,omitempty"`
+	Token     string              `json:"token"`
+	Proxy     string              `json:"proxy"`
+	AllowFrom FlexibleStringSlice `json:"allow_from"`
+}
+
+type PrimaryTelegramConfig struct {
 	Enabled   bool                `json:"enabled"    env:"PICOCLAW_CHANNELS_TELEGRAM_ENABLED"`
+	Name      string              `json:"name,omitempty" env:"PICOCLAW_CHANNELS_TELEGRAM_NAME"`
 	Token     string              `json:"token"      env:"PICOCLAW_CHANNELS_TELEGRAM_TOKEN"`
 	Proxy     string              `json:"proxy"      env:"PICOCLAW_CHANNELS_TELEGRAM_PROXY"`
 	AllowFrom FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_CHANNELS_TELEGRAM_ALLOW_FROM"`

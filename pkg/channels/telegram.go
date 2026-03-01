@@ -44,9 +44,24 @@ func (c *thinkingCancel) Cancel() {
 	}
 }
 
-func NewTelegramChannel(cfg *config.Config, bus *bus.MessageBus) (*TelegramChannel, error) {
+func NewTelegramChannel(name string, tgCfg any, bus *bus.MessageBus) (*TelegramChannel, error) {
+	var telegramCfg config.TelegramConfig
+	switch v := tgCfg.(type) {
+	case config.TelegramConfig:
+		telegramCfg = v
+	case config.PrimaryTelegramConfig:
+		telegramCfg = config.TelegramConfig{
+			Enabled:   v.Enabled,
+			Name:      v.Name,
+			Token:     v.Token,
+			Proxy:     v.Proxy,
+			AllowFrom: v.AllowFrom,
+		}
+	default:
+		return nil, fmt.Errorf("unsupported telegram config type: %T", tgCfg)
+	}
+
 	var opts []telego.BotOption
-	telegramCfg := cfg.Channels.Telegram
 
 	if telegramCfg.Proxy != "" {
 		proxyURL, parseErr := url.Parse(telegramCfg.Proxy)
@@ -72,18 +87,20 @@ func NewTelegramChannel(cfg *config.Config, bus *bus.MessageBus) (*TelegramChann
 		return nil, fmt.Errorf("failed to create telegram bot: %w", err)
 	}
 
-	base := NewBaseChannel("telegram", telegramCfg, bus, telegramCfg.AllowFrom)
+	base := NewBaseChannel(name, telegramCfg, bus, telegramCfg.AllowFrom)
 
 	return &TelegramChannel{
 		BaseChannel:  base,
-		commands:     NewTelegramCommands(bot, cfg),
 		bot:          bot,
-		config:       cfg,
 		chatIDs:      make(map[string]int64),
 		transcriber:  nil,
 		placeholders: sync.Map{},
 		stopThinking: sync.Map{},
 	}, nil
+}
+
+func (c *TelegramChannel) SetCommander(commander TelegramCommander) {
+	c.commands = commander
 }
 
 func (c *TelegramChannel) SetTranscriber(transcriber *voice.GroqTranscriber) {
@@ -151,12 +168,12 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 		return fmt.Errorf("telegram bot not running")
 	}
 
-	chatID, err := parseChatID(msg.ChatID)
+	chatIDs, err := parseChatIDs(msg.ChatID)
 	if err != nil {
-		return fmt.Errorf("invalid chat ID: %w", err)
+		return fmt.Errorf("invalid chat ID(s): %w", err)
 	}
 
-	// Stop thinking animation
+	// Stop thinking animation for this chat context
 	if stop, ok := c.stopThinking.Load(msg.ChatID); ok {
 		if cf, ok := stop.(*thinkingCancel); ok && cf != nil {
 			cf.Cancel()
@@ -166,31 +183,39 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 
 	htmlContent := markdownToTelegramHTML(msg.Content)
 
-	// Try to edit placeholder
-	if pID, ok := c.placeholders.Load(msg.ChatID); ok {
-		c.placeholders.Delete(msg.ChatID)
-		editMsg := tu.EditMessageText(tu.ID(chatID), pID.(int), htmlContent)
-		editMsg.ParseMode = telego.ModeHTML
+	var lastErr error
+	for _, chatID := range chatIDs {
+		// Try to edit placeholder
+		// Note: placeholders are stored per-message ChatID string which might be a comma-separated list
+		// but usually placeholders originate from individual messages coming IN.
+		// For outbound notifications (like cron), we likely don't have placeholders for each recipient.
+		if pID, ok := c.placeholders.Load(msg.ChatID); ok {
+			c.placeholders.Delete(msg.ChatID)
+			editMsg := tu.EditMessageText(tu.ID(chatID), pID.(int), htmlContent)
+			editMsg.ParseMode = telego.ModeHTML
 
-		if _, err = c.bot.EditMessageText(ctx, editMsg); err == nil {
-			return nil
+			if _, err = c.bot.EditMessageText(ctx, editMsg); err == nil {
+				continue
+			}
+			// Fallback to new message if edit fails
 		}
-		// Fallback to new message if edit fails
+
+		tgMsg := tu.Message(tu.ID(chatID), htmlContent)
+		tgMsg.ParseMode = telego.ModeHTML
+
+		if _, err = c.bot.SendMessage(ctx, tgMsg); err != nil {
+			logger.ErrorCF("telegram", "HTML parse failed for recipient, falling back to plain text", map[string]any{
+				"chatID": chatID,
+				"error":  err.Error(),
+			})
+			tgMsg.ParseMode = ""
+			if _, err = c.bot.SendMessage(ctx, tgMsg); err != nil {
+				lastErr = err
+			}
+		}
 	}
 
-	tgMsg := tu.Message(tu.ID(chatID), htmlContent)
-	tgMsg.ParseMode = telego.ModeHTML
-
-	if _, err = c.bot.SendMessage(ctx, tgMsg); err != nil {
-		logger.ErrorCF("telegram", "HTML parse failed, falling back to plain text", map[string]any{
-			"error": err.Error(),
-		})
-		tgMsg.ParseMode = ""
-		_, err = c.bot.SendMessage(ctx, tgMsg)
-		return err
-	}
-
-	return nil
+	return lastErr
 }
 
 func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Message) error {
@@ -403,10 +428,25 @@ func (c *TelegramChannel) downloadFile(ctx context.Context, fileID, ext string) 
 	return c.downloadFileWithInfo(file, ext)
 }
 
-func parseChatID(chatIDStr string) (int64, error) {
-	var id int64
-	_, err := fmt.Sscanf(chatIDStr, "%d", &id)
-	return id, err
+func parseChatIDs(chatIDStr string) ([]int64, error) {
+	parts := strings.Split(chatIDStr, ",")
+	res := make([]int64, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		var id int64
+		if _, err := fmt.Sscanf(p, "%d", &id); err == nil {
+			res = append(res, id)
+		} else {
+			return nil, fmt.Errorf("invalid chat ID element %q: %w", p, err)
+		}
+	}
+	if len(res) == 0 {
+		return nil, fmt.Errorf("no valid chat IDs found in %q", chatIDStr)
+	}
+	return res, nil
 }
 
 func markdownToTelegramHTML(text string) string {

@@ -29,7 +29,7 @@ func DefaultConfig() *Config {
 				BridgeURL: "ws://localhost:3001",
 				AllowFrom: FlexibleStringSlice{},
 			},
-			Telegram: TelegramConfig{
+			Telegram: PrimaryTelegramConfig{
 				Enabled:   false,
 				Token:     "",
 				AllowFrom: FlexibleStringSlice{},

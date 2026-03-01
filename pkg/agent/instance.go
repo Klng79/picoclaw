@@ -92,6 +92,15 @@ func NewAgentInstance(
 		temperature = *defaults.Temperature
 	}
 
+	// Resolve the actual model ID from configuration (translating aliases to provider IDs)
+	resolvedModel := model
+	if cfg != nil {
+		if mCfg, err := cfg.GetModelConfig(model); err == nil {
+			_, resolvedModel, _ = providers.CreateProviderFromConfig(mCfg)
+		}
+	}
+	model = resolvedModel
+
 	// Resolve fallback candidates
 	modelCfg := providers.ModelConfig{
 		Primary:   model,
